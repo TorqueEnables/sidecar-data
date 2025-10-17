@@ -1,49 +1,161 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sidecar HUD — StakeLens</title>
+<title>Sidecar HUD — decision armor for Indian equities</title>
+<meta name="description" content="A tiny, serverless HUD that shows ASM/T2T, F&O ban, near-term earnings, pledge/insider, and slippage right on your broker page. No login. No tracking. Free.">
+<meta property="og:title" content="Sidecar HUD — decision armor for Indian equities">
+<meta property="og:description" content="4 small chips that prevent dumb losses. Works on Kite/Dhan/Angel.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://torqueenables.github.io/sidecar-data/docs/">
+<link rel="canonical" href="https://torqueenables.github.io/sidecar-data/docs/">
 <style>
-  :root{--fg:#eaeef3;--mut:#b6c2d0;--chip:#0b0f14;--glow:rgba(0,0,0,.35)}
-  html,body{height:100%} body{margin:0;background:
-    radial-gradient(1200px 800px at 10% 10%,#0b1324 0%,#0b111b 40%,#090d14 100%),
-    linear-gradient(135deg,#0d1220,#0b1018);}
-  .wrap{max-width:880px;margin:0 auto;padding:48px 20px;color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu}
-  .glass{backdrop-filter: blur(14px) saturate(130%);-webkit-backdrop-filter: blur(14px) saturate(130%);
-    background: rgba(20,22,28,.55);border:1px solid rgba(255,255,255,.18);border-radius:20px;padding:28px 28px 24px;
-    box-shadow:0 20px 50px var(--glow), inset 0 0 0 1px rgba(255,255,255,.06)}
-  h1{margin:0 0 10px;font-size:28px}
-  p{margin:10px 0;color:var(--mut)}
-  .btn{display:inline-block;margin-top:14px;padding:12px 18px;border-radius:999px;
-    background:#8ec5ff;color:#08121c;font-weight:700;text-decoration:none;box-shadow:0 2px 0 rgba(255,255,255,.4) inset}
-  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-  .chip{background:#3b82f6;color:#0b0f14;padding:6px 10px;border-radius:999px;font-weight:700}
-  .chip.red{background:#e5484d}.chip.amber{background:#f59e0b}.chip.green{background:#22c55e}
-  code{background:#0e1524;padding:2px 6px;border-radius:6px}
-  .grid{display:grid;gap:16px;grid-template-columns:1fr 1fr;margin-top:20px}
-  @media (max-width:760px){.grid{grid-template-columns:1fr}}
+  :root{
+    --bg1:#0b111b; --bg2:#0a0f17; --fg:#e9eef6; --mut:#b6c2d0; --accent:#8ec5ff;
+    --glass: rgba(20,22,28,.55); --border:rgba(255,255,255,.18); --glow:rgba(0,0,0,.35);
+    --red:#e5484d; --amber:#f59e0b; --blue:#3b82f6; --green:#22c55e; --ink:#0b0f14;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--fg);
+    background:
+      radial-gradient(1200px 800px at 10% 10%,#0b1324 0%,var(--bg1) 40%,var(--bg2) 100%),
+      linear-gradient(135deg,#0d1220,var(--bg2));
+    font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
+  }
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 20px}
+  .glass{
+    backdrop-filter: blur(14px) saturate(130%); -webkit-backdrop-filter: blur(14px) saturate(130%);
+    background: var(--glass); border:1px solid var(--border); border-radius:20px;
+    padding:28px; box-shadow:0 20px 50px var(--glow), inset 0 0 0 1px rgba(255,255,255,.06)
+  }
+  h1,h2,h3{margin:0 0 12px}
+  h1{font-size:30px}
+  h2{font-size:22px;margin-top:22px}
+  p{margin:8px 0;color:var(--mut)}
+  .hero{display:grid;grid-template-columns:1.2fr .8fr;gap:24px;align-items:center}
+  @media (max-width:860px){.hero{grid-template-columns:1fr}}
+  .btn{
+    display:inline-block;margin:14px 10px 0 0;padding:12px 18px;border-radius:999px;
+    background:var(--accent);color:var(--ink);font-weight:800;text-decoration:none;
+    box-shadow:0 2px 0 rgba(255,255,255,.35) inset; transition:transform .06s ease;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .mut{color:var(--mut)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .chip{background:var(--blue);color:var(--ink);padding:6px 10px;border-radius:999px;font-weight:800}
+  .chip.red{background:var(--red)} .chip.amber{background:var(--amber)} .chip.green{background:var(--green)}
+  .grid{display:grid;gap:18px;grid-template-columns:repeat(3,1fr)}
+  @media (max-width:860px){.grid{grid-template-columns:1fr}}
+  .card{padding:18px;border-radius:16px;border:1px solid var(--border);background:rgba(15,16,20,.45)}
+  code{background:#0e1524;color:#bfe0ff;padding:2px 6px;border-radius:6px}
+  .footer{opacity:.8;text-align:center;margin-top:20px}
+  a { color:#9fd2ff }
+  .kbd{font-weight:700;background:#0e1524;color:#bfe0ff;padding:2px 6px;border-radius:6px}
 </style>
+
 <div class="wrap">
-  <div class="glass">
-    <h1>Sidecar HUD</h1>
-    <p>Four tiny, decision-critical chips on your broker page. <b>No login. No tracking. Free.</b></p>
-    <a class="btn" href="./sidecar.user.js">Install for Chrome/Edge/Firefox</a>
-    <div class="chips">
-      <span class="chip red">T2T / ASM active</span>
-      <span class="chip amber">Earnings in 2 days</span>
-      <span class="chip amber">Slippage 0.42%</span>
-      <span class="chip green">Insider net +₹3–4cr (30d)</span>
-    </div>
-    <div class="grid">
-      <div>
-        <h3 style="margin:18px 0 8px">How it decides</h3>
-        <p><b>Priority:</b> Hard stops → Time-boxed risks → Execution frictions → Structural → Info.</p>
-        <p><b>Modes:</b> <code>Swing</code> (weekly) shows events/pledge/insider; <code>Day</code> (intraday) shows bans/surveillance/slippage.</p>
+  <!-- HERO -->
+  <div class="glass hero">
+    <div>
+      <h1>Sidecar HUD — decision armor for Indian equities</h1>
+      <p>Four tiny, ranked chips sit next to your Buy/Sell: <b>T2T/ASM</b>, <b>F&amp;O ban</b>, <b>near-term earnings</b>, <b>pledge/insider</b>, and <b>slippage</b>. No login. No tracking. Free.</p>
+      <a class="btn" href="./sidecar.user.js">Install for Chrome/Edge/Firefox</a>
+      <a class="btn" href="../health/heartbeat.txt" style="background:#c8ffe0">Status</a>
+      <div class="chips">
+        <span class="chip red">T2T / ASM active</span>
+        <span class="chip amber">Earnings in 2 days</span>
+        <span class="chip amber">Slippage 0.42%</span>
+        <span class="chip green">Insider net +₹3–4cr (30d)</span>
       </div>
-      <div>
-        <h3 style="margin:18px 0 8px">Trust & privacy</h3>
-        <p>Data comes from public exchanges and computed on-page. We never collect personal data. Source links appear on hover in the HUD.</p>
-        <p>Health: <a href="../health/heartbeat.txt" style="color:#8ec5ff">heartbeat</a></p>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:4px">What you’ll see</h3>
+      <p class="mut">A one-line verdict + up to 4 color chips. Nothing more.</p>
+      <ul class="mut" style="margin:8px 0 0 18px">
+        <li><b>Red</b> = Hard stop (e.g., T2T/ASM, F&amp;O ban)</li>
+        <li><b>Amber</b> = Near-term risk (earnings in ≤ 3–5 sessions, high slippage)</li>
+        <li><b>Blue/Green</b> = Helpful context (delivery spikes, insider net)</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ABOUT -->
+  <div class="glass" style="margin-top:22px">
+    <h2>About Sidecar</h2>
+    <p>Sidecar is a <b>serverless, privacy-first overlay</b> for brokers like Kite, Dhan and Angel. It prevents expensive mistakes by surfacing only the signals that change your execution <i>right now</i>. The ranking is simple: <b>Hard stops → Time-boxed risks → Execution frictions → Structural → Info</b>. Maximum four chips, always sourced.</p>
+  </div>
+
+  <!-- WHAT WE SHOW -->
+  <div class="glass" style="margin-top:22px">
+    <h2>What Sidecar shows</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Hard stops</h3>
+        <p class="mut">T2T/ASM/GSM/ESM, F&amp;O ban today. If it blocks intraday or exits, you’ll know.</p>
+      </div>
+      <div class="card">
+        <h3>Near-term events</h3>
+        <p class="mut">Earnings/Board/Record within your mode horizon (Day ≤3 sessions, Swing ≤5).</p>
+      </div>
+      <div class="card">
+        <h3>Execution frictions</h3>
+        <p class="mut">On-page <b>slippage</b> from Bid/Ask + <b>delivery anomalies</b> (5v20×) for sizing sanity.</p>
+      </div>
+      <div class="card">
+        <h3>Structural signals</h3>
+        <p class="mut">Promoter <b>pledge Δ30d</b> and <b>insider net (7/30d)</b> in rupee buckets.</p>
+      </div>
+      <div class="card">
+        <h3>Modes</h3>
+        <p class="mut"><span class="kbd">Swing</span> prioritizes events/pledge/insider. <span class="kbd">Day</span> prioritizes bans/surveillance/slippage. Switch anytime in the HUD.</p>
+      </div>
+      <div class="card">
+        <h3>Backfill logic</h3>
+        <p class="mut">If an item is not applicable (e.g., no events soon), the next priority fills the slot. You always see the most useful four.</p>
       </div>
     </div>
   </div>
+
+  <!-- HOW IT WORKS -->
+  <div class="glass" style="margin-top:22px">
+    <h2>How it works</h2>
+    <ol class="mut" style="margin-left:18px">
+      <li>Click <b>Install</b> above (Tampermonkey/Violentmonkey opens → Install).</li>
+      <li>Open a stock on your broker (e.g., <code>/quote/NSE/BEL</code> or chart view).</li>
+      <li>Sidecar docks near <b>Buy/Sell</b>. Verdict sentence + four chips appear. That’s it.</li>
+    </ol>
+  </div>
+
+  <!-- PRIVACY & SAFETY -->
+  <div class="glass" style="margin-top:22px">
+    <h2>Privacy &amp; safety</h2>
+    <p class="mut">No login, no account, no tracking. Your preferences stay in your browser. Data is built from public exchange pages and simple computations; we never auto-trade or alter order buttons. Every chip links to its source in the HUD.</p>
+  </div>
+
+  <!-- FAQ -->
+  <div class="glass" style="margin-top:22px">
+    <h2>FAQ</h2>
+    <p><b>Is this free?</b> Yes. It’s a public good. We may add a Pro tier later; the free HUD stays useful.</p>
+    <p><b>Does it support my broker?</b> Works on Kite, Dhan, and Angel. More later via updates.</p>
+    <p><b>Will it slow my browser?</b> No. It fetches one small JSON per symbol and computes slippage locally.</p>
+    <p><b>Where does insider data come from?</b> Public filings (v1). It’s bucketized and delayed; no private data is exposed.</p>
+  </div>
+
+  <!-- ROADMAP + CHANGELOG -->
+  <div class="glass" style="margin-top:22px">
+    <h2>Roadmap &amp; Changelog</h2>
+    <p class="mut">v1: ASM/T2T, F&amp;O ban, events, delivery anomaly, insider buckets, on-page slippage. Next: pledge Δ30d, rating actions, index watchlists, per-broker docking polish.</p>
+    <p class="mut">Status: <a href="../health/heartbeat.txt">heartbeat</a></p>
+  </div>
+
+  <!-- CONTACT -->
+  <div class="glass" style="margin-top:22px">
+    <h2>Support &amp; contact</h2>
+    <p class="mut">Found a bug or have a request? Open an issue on <a href="https://github.com/torqueenables/sidecar-data">GitHub</a> or email <a href="mailto:hello@stake.tools">hello@stake.tools</a> (placeholder).</p>
+  </div>
+
+  <p class="footer mut">© StakeLens • Informational only. Verify with exchange sources before acting.</p>
 </div>
+</html>
