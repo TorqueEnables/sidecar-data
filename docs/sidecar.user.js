@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sidecar HUD (StakeLens)
 // @namespace    https://torqueenables.github.io/sidecar-data
-// @version      0.2.0
+// @version      0.2.1
 // @description  Decision-critical chips on broker pages (max 4). No login, no tracking.
 // @match        https://kite.zerodha.com/*
 // @match        https://web.dhan.co/*
@@ -17,41 +17,54 @@
 
   // ---------- Config ----------
   const DATA_BASE = 'https://torqueenables.github.io/sidecar-data/data/';
-  const MODE_KEY = 'sidecar_mode';                 // 'day' or 'swing'
-  const PREF_COMPACT = 'sidecar_compact';          // '1' = smaller UI
-  const CACHE = new Map();
-
-  // Defaults (no popups)
+  const MODE_KEY = 'sidecar_mode';           // 'day' or 'swing'
+  const PREF_COMPACT = 'sidecar_compact';    // '1' compact UI
   if (!localStorage.getItem(MODE_KEY)) localStorage.setItem(MODE_KEY, 'swing');
 
-  // ---------- Broker gating (avoid dashboard noise) ----------
-  function isKiteQuoteView() {
-    // Only render on quote pages like /quote/NSE/BEL
-    return location.hostname === 'kite.zerodha.com' && /^\/quote\/(NSE|BSE)\/[A-Z0-9.\-]+/i.test(location.pathname);
-  }
-  function isDhanQuoteView() {
-    return location.hostname === 'web.dhan.co' && /\/(equities|stocks)\/(NSE|BSE)\/[A-Z0-9.\-]+/i.test(location.pathname);
-  }
-  function isAngelQuoteView() {
-    return location.hostname === 'trade.angelone.in' && /\/stocks\/(NSE|BSE)\/[A-Z0-9.\-]+/i.test(location.pathname);
-  }
-  function isQuoteView() {
-    return isKiteQuoteView() || isDhanQuoteView() || isAngelQuoteView();
-  }
+  const CACHE = new Map();
+  let lastKey = '';
 
-  // ---------- Symbol detection (no prompts) ----------
-  function detectSymbol() {
-    const p = location.pathname;
-    let m = p.match(/\/quote\/(NSE|BSE)\/([A-Z0-9.\-]+)/i); // Kite
-    if (m) return { ex: m[1].toUpperCase(), sym: m[2].toUpperCase() };
-    m = p.match(/\/(equities|stocks)\/(NSE|BSE)\/([A-Z0-9.\-]+)/i); // Dhan
-    if (m) return { ex: m[2].toUpperCase(), sym: m[3].toUpperCase() };
-    m = p.match(/\/stocks\/(NSE|BSE)\/([A-Z0-9.\-]+)/i); // Angel
-    if (m) return { ex: m[1].toUpperCase(), sym: m[2].toUpperCase() };
+  // ---------- Route helpers ----------
+  const HOST = location.hostname;
+
+  const PATTERNS = [
+    // Kite quote page: /quote/NSE/BEL
+    /\/quote\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
+    // Kite chart page (your URL): /markets/chart/web/ciq/NSE/BEL/98049
+    /\/markets\/chart\/web\/ciq\/(NSE|BSE)\/([A-Z0-9.\-]+)\//i,
+    // Dhan: /equities/NSE/BEL or /stocks/NSE/BEL
+    /\/(equities|stocks)\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
+    // Angel: /stocks/NSE/BEL
+    /\/stocks\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
+    // Fallback query params some brokers use
+    /[?&]exchange=(NSE|BSE)[^#&]*[?&]tradingsymbol=([A-Z0-9.\-]+)/i
+  ];
+
+  function parseSymbolFromPath() {
+    const p = location.pathname + location.search;
+    for (const re of PATTERNS) {
+      const m = p.match(re);
+      if (!m) continue;
+      if (re === PATTERNS[2]) return { ex: m[2].toUpperCase(), sym: m[3].toUpperCase() }; // Dhan
+      return { ex: (m[1] || m[2]).toUpperCase(), sym: (m[2] || m[3]).toUpperCase() };
+    }
     return null;
   }
 
-  // ---------- Fetch JSON ----------
+  function isSymbolView() {
+    if (HOST === 'kite.zerodha.com') {
+      return !!location.pathname.match(/\/quote\/|\/markets\/chart\/web\/ciq\//);
+    }
+    if (HOST === 'web.dhan.co') {
+      return !!location.pathname.match(/\/(equities|stocks)\//);
+    }
+    if (HOST === 'trade.angelone.in') {
+      return !!location.pathname.match(/\/stocks\//);
+    }
+    return false;
+  }
+
+  // ---------- Data ----------
   async function fetchJSON(ex, sym) {
     const key = `${ex}:${sym}`;
     if (CACHE.has(key)) return CACHE.get(key);
@@ -68,9 +81,7 @@
     }
   }
 
-  // ---------- On-page slippage (Day mode mostly) ----------
   function computeSlippageFromDOM() {
-    // Conservative v0: parse visible "Bid" / "Ask" values if present
     const txt = document.body.innerText || '';
     const bid = parseFloat((txt.match(/Bid\s*([\d,]*\.?\d+)/i) || [])[1]?.replace(/,/g, ''));
     const ask = parseFloat((txt.match(/Ask\s*([\d,]*\.?\d+)/i) || [])[1]?.replace(/,/g, ''));
@@ -81,26 +92,6 @@
     return null;
   }
 
-  // ---------- Verdict (human phrasing) ----------
-  function buildVerdict(chips) {
-    const hasRed = chips.some(c => c.color === 'red');
-    const hasAmber = chips.some(c => c.color === 'amber');
-    const head = hasRed ? 'Caution' : hasAmber ? 'Heads-up' : 'All clear';
-
-    const phrases = [];
-    for (const c of chips.slice(0, 4)) {
-      const t = (c.label || '').toLowerCase();
-      if (/no derivatives today/.test(t)) phrases.push('No F&O today');
-      else if (/asm|gsm|esm|t2t/.test(t)) phrases.push(c.label.replace(/:/, ' –'));
-      else if (/earnings|board|record/.test(t)) phrases.push(c.label.replace(/ in /i, ' in '));
-      else if (/slippage/.test(t)) phrases.push(c.label);
-      else if (/insider/.test(t)) phrases.push(c.label);
-      else phrases.push(c.label);
-    }
-    return `${head}: ${phrases.slice(0, 3).join(' • ')}`;
-  }
-
-  // ---------- Map server chips ----------
   function mapChips(json) {
     const mode = localStorage.getItem(MODE_KEY) || 'swing';
     const keys = (json.mode_top && json.mode_top[mode]) || [];
@@ -113,7 +104,25 @@
     return out;
   }
 
-  // ---------- UI: card + docking near Buy/Sell ----------
+  // ---------- Verdict ----------
+  function humanVerdict(chips) {
+    const hasRed = chips.some(c => c.color === 'red');
+    const hasAmber = chips.some(c => c.color === 'amber');
+    const head = hasRed ? 'Caution' : hasAmber ? 'Heads-up' : 'All clear';
+    const phrases = [];
+    for (const c of chips.slice(0, 4)) {
+      const t = (c.label || '').toLowerCase();
+      if (/no derivatives today/.test(t)) phrases.push('No F&O today');
+      else if (/asm|gsm|esm|t2t/.test(t)) phrases.push(c.label.replace(/:/, ' –'));
+      else if (/earnings|board|record/.test(t)) phrases.push(c.label);
+      else if (/slippage/.test(t)) phrases.push(c.label);
+      else if (/insider/.test(t)) phrases.push(c.label);
+      else phrases.push(c.label);
+    }
+    return `${head}: ${phrases.slice(0, 3).join(' • ')}`;
+  }
+
+  // ---------- UI ----------
   function colorHex(c) {
     if (c === 'red') return '#d33';
     if (c === 'amber') return '#e6a700';
@@ -122,10 +131,12 @@
     return '#666';
   }
 
-  function createCard() {
-    const card = document.createElement('div');
-    card.id = 'sidecar-hud';
+  function ensureCard() {
+    let card = document.getElementById('sidecar-hud');
+    if (card) return card;
     const compact = localStorage.getItem(PREF_COMPACT) === '1';
+    card = document.createElement('div');
+    card.id = 'sidecar-hud';
     card.style.cssText = `
       position: fixed; z-index: 2147483647;
       background: rgba(23,24,28,0.96); color: #fff;
@@ -143,9 +154,7 @@
         <span style="cursor:pointer;color:#9cf" id="sc-compact">${compact?'expand':'compact'}</span>
       </div>`;
     document.body.appendChild(card);
-
-    // Actions
-    card.querySelector('#sc-toggle').onclick = (e) => {
+    card.querySelector('#sc-toggle').onclick = () => {
       const cur = localStorage.getItem(MODE_KEY) || 'swing';
       const next = cur === 'swing' ? 'day' : 'swing';
       localStorage.setItem(MODE_KEY, next);
@@ -160,10 +169,8 @@
   }
 
   function renderChips(chips, verdictText) {
-    const card = document.getElementById('sidecar-hud') || createCard();
-    const verdictEl = card.querySelector('#sc-verdict');
-    verdictEl.textContent = verdictText || 'Sidecar';
-
+    const card = ensureCard();
+    card.querySelector('#sc-verdict').textContent = verdictText || 'Sidecar';
     const row = card.querySelector('#sc-row');
     row.innerHTML = '';
     chips.slice(0, 4).forEach(c => {
@@ -177,23 +184,22 @@
     });
   }
 
-  // Try to dock near Buy/Sell; fallback bottom-right
-  function findOrderAnchor() {
-    // Look for a visible button with text Buy or Sell on the page
+  // Docking near visible Buy/Sell/Trade; otherwise bottom-right
+  function findAnchor() {
     const btns = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
     const cand = btns.find(b => {
       const t = (b.innerText || '').trim().toLowerCase();
       if (!t) return false;
-      const r = /^(buy|sell)$/i.test(t) || /\b(buy|sell)\b/i.test(t);
-      const rect = b.getBoundingClientRect();
-      const visible = rect.width > 40 && rect.height > 20 && rect.top >= 0 && rect.bottom <= (window.innerHeight + 200);
-      return r && visible;
+      const match = /^(buy|sell|trade)$/.test(t) || /\b(buy|sell|trade)\b/.test(t);
+      const r = b.getBoundingClientRect();
+      const visible = r.width > 40 && r.height > 20 && r.bottom > 0 && r.top < (window.innerHeight + 200);
+      return match && visible;
     });
     return cand || null;
   }
 
-  function dockCardNear(el) {
-    const card = document.getElementById('sidecar-hud') || createCard();
+  function dockNear(el) {
+    const card = ensureCard();
     const rect = el.getBoundingClientRect();
     const x = Math.min(rect.right + 12, window.innerWidth - card.offsetWidth - 16);
     const y = Math.max(16, rect.top + window.scrollY - 10);
@@ -203,60 +209,55 @@
     card.style.bottom = 'auto';
   }
 
-  function dockFallbackBottomRight() {
-    const card = document.getElementById('sidecar-hud') || createCard();
+  function dockBottomRight() {
+    const card = ensureCard();
     card.style.right = '16px';
     card.style.bottom = '16px';
     card.style.left = 'auto';
     card.style.top = 'auto';
   }
 
-  // ---------- Main ----------
-  async function main() {
-    if (!isQuoteView()) return; // no HUD on dashboard/login/etc.
+  // ---------- Render for current route ----------
+  async function renderForRoute() {
+    if (!isSymbolView()) {
+      const c = document.getElementById('sidecar-hud'); if (c) c.remove();
+      lastKey = '';
+      return;
+    }
+    // Give SPA time to paint
+    await new Promise(r => setTimeout(r, 600));
 
-    // Wait a bit so broker DOM settles
-    await new Promise(r => setTimeout(r, 800));
+    const s = parseSymbolFromPath();
+    if (!s) return;
 
-    const sym = detectSymbol();
-    if (!sym) return;
+    const key = `${s.ex}:${s.sym}`;
+    if (key === lastKey) {
+      // Just re-dock if needed
+      const a = findAnchor(); if (a) dockNear(a); else dockBottomRight();
+      return;
+    }
+    lastKey = key;
 
-    let j = await fetchJSON(sym.ex, sym.sym);
-    if (!j) return;
+    const j = await fetchJSON(s.ex, s.sym);
+    if (!j) { dockBottomRight(); return; }
 
-    // Server-picked top chips
     const chips = mapChips(j);
-
-    // Add client-only slippage (mostly Day mode)
     const slip = computeSlippageFromDOM();
     if (slip) chips.splice(Math.min(2, chips.length), 0, slip);
 
-    const vtext = buildVerdict(chips);
-    renderChips(chips, vtext);
-
-    // Dock near Buy/Sell if possible; watch DOM for changes
-    const anchor = findOrderAnchor();
-    if (anchor) dockCardNear(anchor); else dockFallbackBottomRight();
-
-    // Re-dock on resize/scroll (throttle)
-    let t;
-    window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => {
-      const a = findOrderAnchor();
-      if (a) dockCardNear(a); else dockFallbackBottomRight();
-    }, 120);});
-    window.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(() => {
-      const a = findOrderAnchor();
-      if (a) dockCardNear(a); else dockFallbackBottomRight();
-    }, 120);});
-
-    // React to route changes (Kite SPA navigation)
-    const obs = new MutationObserver(() => {
-      if (!isQuoteView()) {
-        const c = document.getElementById('sidecar-hud'); if (c) c.remove();
-      }
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
+    renderChips(chips, humanVerdict(chips));
+    const a = findAnchor(); if (a) dockNear(a); else dockBottomRight();
   }
 
-  main();
+  // ---------- Watch URL changes (SPA) ----------
+  let hrefLast = location.href;
+  setInterval(() => {
+    if (location.href !== hrefLast) {
+      hrefLast = location.href;
+      renderForRoute();
+    }
+  }, 700);
+
+  // Initial render
+  renderForRoute();
 })();
