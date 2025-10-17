@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sidecar HUD (StakeLens)
 // @namespace    https://torqueenables.github.io/sidecar-data
-// @version      0.3.0
+// @version      0.3.1
 // @description  Decision-critical chips on broker pages (max 4). No login, no tracking.
 // @match        https://kite.zerodha.com/*
 // @match        https://web.dhan.co/*
