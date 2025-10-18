@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Sidecar HUD (StakeLens)
 // @namespace    https://torqueenables.github.io/sidecar-data
-// @version      0.3.1
-// @description  Decision-critical chips on broker pages (max 4). No login, no tracking.
+// @version      0.4.0
+// @description  Insight-first, 4-chip HUD on broker pages with restriction badges.
 // @match        https://kite.zerodha.com/*
 // @match        https://web.dhan.co/*
 // @match        https://trade.angelone.in/*
@@ -15,193 +15,182 @@
 (function () {
   'use strict';
 
-  // ---------- Config ----------
   const DATA_BASE = 'https://torqueenables.github.io/sidecar-data/data/';
-  const MODE_KEY = 'sidecar_mode';              // 'day' or 'swing'
-  const PREF_COMPACT = 'sidecar_compact';       // '1' = compact UI
+  const MODE_KEY = 'sidecar_mode';
+  const PREF_COMPACT = 'sidecar_compact';
   if (!localStorage.getItem(MODE_KEY)) localStorage.setItem(MODE_KEY, 'swing');
 
-  const CACHE = new Map();
-  let lastKey = '';
+  const CACHE=new Map(); let lastKey='';
 
-  // ---------- Symbol view detection (quote + chart routes) ----------
+  // --- Route parsing (quote + chart) ---
   const HOST = location.hostname;
   const PATTERNS = [
-    /\/quote\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,                        // Kite quote
-    /\/markets\/chart\/web\/ciq\/(NSE|BSE)\/([A-Z0-9.\-]+)\//i,    // Kite chart
-    /\/(equities|stocks)\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,             // Dhan
-    /\/stocks\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,                        // Angel
+    /\/quote\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
+    /\/markets\/chart\/web\/ciq\/(NSE|BSE)\/([A-Z0-9.\-]+)\//i,
+    /\/(equities|stocks)\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
+    /\/stocks\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
     /[?&]exchange=(NSE|BSE)[^#&]*[?&]tradingsymbol=([A-Z0-9.\-]+)/i
   ];
-  function parseSymbolFromPath() {
+  function parseSymbolFromPath(){
     const p = location.pathname + location.search;
-    for (const re of PATTERNS) {
-      const m = p.match(re);
-      if (!m) continue;
-      if (re === PATTERNS[2]) return { ex: m[2].toUpperCase(), sym: m[3].toUpperCase() }; // Dhan
-      return { ex: (m[1] || m[2]).toUpperCase(), sym: (m[2] || m[3]).toUpperCase() };
+    for(const re of PATTERNS){
+      const m=p.match(re); if(!m) continue;
+      if(re===PATTERNS[2]) return {ex:m[2].toUpperCase(), sym:m[3].toUpperCase()};
+      return {ex:(m[1]||m[2]).toUpperCase(), sym:(m[2]||m[3]).toUpperCase()};
     }
     return null;
   }
-  function isSymbolView() {
-    if (HOST === 'kite.zerodha.com') return /\/quote\/|\/markets\/chart\/web\/ciq\//.test(location.pathname);
-    if (HOST === 'web.dhan.co')      return /\/(equities|stocks)\//.test(location.pathname);
-    if (HOST === 'trade.angelone.in')return /\/stocks\//.test(location.pathname);
+  function isSymbolView(){
+    if(HOST==='kite.zerodha.com') return /\/quote\/|\/markets\/chart\/web\/ciq\//.test(location.pathname);
+    if(HOST==='web.dhan.co') return /\/(equities|stocks)\//.test(location.pathname);
+    if(HOST==='trade.angelone.in') return /\/stocks\//.test(location.pathname);
     return false;
   }
 
-  // ---------- Data fetch ----------
-  async function fetchJSON(ex, sym) {
-    const key = `${ex}:${sym}`;
-    if (CACHE.has(key)) return CACHE.get(key);
-    const url = `${DATA_BASE}${encodeURIComponent(ex)}:${encodeURIComponent(sym)}.json`;
-    try {
-      const r = await fetch(url, { cache: 'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const j = await r.json();
-      CACHE.set(key, j);
-      return j;
-    } catch (e) {
-      console.warn('Sidecar HUD: fetch failed', e);
-      return null;
-    }
+  // --- Fetch ---
+  async function fetchJSON(ex,sym){
+    const key=`${ex}:${sym}`;
+    if(CACHE.has(key)) return CACHE.get(key);
+    try{
+      const r=await fetch(`${DATA_BASE}${encodeURIComponent(ex)}:${encodeURIComponent(sym)}.json`,{cache:'no-store'});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const j=await r.json(); CACHE.set(key,j); return j;
+    }catch(e){ console.warn('Sidecar HUD: fetch failed',e); return null; }
   }
 
-  // ---------- Applicability filter (hide “None/Not applicable”) ----------
-  function normalizeChip(key, p) {
-    if (!p) return null;
-    const d = (p.detail || '').trim();
-    const dl = d.toLowerCase();
+  // --- Applicability normalization for new chips ---
+  function normChip(key, p){
+    if(!p) return null;
+    const d=(p.detail||'').trim(); const dl=d.toLowerCase();
+    const obj = (color)=>({key, color, label:d});
 
-    // Generic "none" / "not active" filter
-    const isNone = /(^|\s)(none|not\s+active|n\/a|no\s+event|no\s+change)(\s|$)/i.test(d);
-
-    // Key-specific checks
-    if (key === 't2t_asm') {
-      // Show only if any surveillance/T2T is actually active
-      if (isNone || /asm:\s*none/i.test(d) || /gsm:\s*none/i.test(d)) return null;
-      return { key, color: p.color || 'amber', label: d.replace(/:/, ' –') };
+    if(key==='earnings'){
+      if(!/earnings|board|record/.test(dl)) return null;
+      if(/in\s*\d+\s*d|today|tomorrow/.test(dl)) return obj(p.color||'amber');
+      return null;
     }
-    if (key === 'fo_ban_today') {
-      // Only show when ban ACTIVE
-      const active = /ban/i.test(dl) || /no derivatives today/i.test(dl);
-      if (!active || /not in ban|no ban/i.test(dl)) return null;
-      return { key, color: 'red', label: 'In F&O ban today' };
+    if(key==='egs'){ // "EGS High 3.2%"
+      const m=dl.match(/(low|medium|high)\s+(\d+(\.\d+)?)%/);
+      if(!m) return null;
+      return {key, color:(m[1]==='high'?'amber':'blue'), label:`Earnings gap ${m[1]} ${m[2]}%`.replace(/^e/, 'E')};
     }
-    if (key === 'events_short' || key === 'events_week') {
-      // Keep when an event is within the mode horizon (“in 1–5d”, “today”, “tomorrow”)
-      const soon = /in\s*\d+\s*d|today|tomorrow|t\-\d/i.test(dl);
-      if (!soon) return null;
-      // Humanize a bit
-      return { key, color: p.color || 'amber', label: d.replace(/(\d+)d/i,'$1 days') };
+    if(key==='accum'){ // "Accumulation 3/5d • 1.8×"
+      const m=dl.match(/(\d)\/5d.*?(\d+(\.\d+)?)×/);
+      if(!m) return null;
+      const ratio=parseFloat(m[2]); if(ratio<1.5) return null;
+      return obj(p.color||'amber');
     }
-    if (key === 'delivery_anom') {
-      const m = dl.match(/(\d+(\.\d+)?)\s*$/); // last number like 1.8
-      if (!m) return null;
-      const ratio = parseFloat(m[1]);
-      if (!isFinite(ratio) || ratio < 1.5) return null;
-      return { key, color: 'blue', label: `Delivery 5v20 ${ratio.toFixed(2)}×` };
+    if(key==='rod'){ // "Delivery Rising 1.6×"
+      const m=dl.match(/(\d+(\.\d+)?)×/); if(!m) return null;
+      const ratio=parseFloat(m[1]); if(ratio<1.5) return null;
+      return obj(p.color||'blue');
     }
-    if (key === 'pledge_delta') {
-      // e.g., "+0.6 pp (30d)"; hide if magnitude small
-      const mm = dl.match(/([+\-]?\d+(\.\d+)?)\s*pp/);
-      if (!mm || Math.abs(parseFloat(mm[1])) < 0.5) return null;
-      return { key, color: p.color || 'amber', label: d.replace('pp','pp') };
+    if(key==='insider_net'){ // "+₹3–4cr (30d)"
+      if(/^\+?₹?0/.test(dl)) return null;
+      return {key, color:p.color||'green', label:`Insider net ${d}`};
     }
-    if (key === 'insider_net') {
-      // e.g., "+₹3–4cr (30d)"; hide if bucket is 0 or missing
-      if (/^\+?₹?0/.test(dl) || isNone) return null;
-      return { key, color: p.color || 'green', label: `Insider net ${d}` };
+    if(key==='pledge_delta'){ // "+0.6 pp (30d)"
+      const mm=dl.match(/([+\-]?\d+(\.\d+)?)\s*pp/);
+      if(!mm || Math.abs(parseFloat(mm[1]))<0.5) return null;
+      return obj(p.color||'amber');
     }
-    if (key === 'priceband_t2t' || key === 'bulk_heat' || key === 'circuit') {
-      // Low priority info; let ranking decide later (they’ll usually land in More)
-      if (isNone) return null;
-      return { key, color: p.color || 'blue', label: d };
+    if(key==='bulk_heat'){ // "3 deals (30d)"
+      const cm=dl.match(/(\d+)\s+deals/); if(!cm) return null;
+      const n=parseInt(cm[1],10); if(n<2) return null;
+      return obj(p.color||'blue');
     }
-
-    // Fallback: if we can’t understand it, drop it
+    if(key==='post_mortem'){ // "+6.1% today • prior 2.0×"
+      if(!/[+\-]\d+(\.\d+)?%/.test(dl)) return null;
+      return obj(p.color||'amber');
+    }
+    // Unknown -> drop
     return null;
   }
 
-  function mapApplicableChips(json) {
-    const mode = localStorage.getItem(MODE_KEY) || 'swing';
+  function mapApplicableChips(json){
+    const mode = localStorage.getItem(MODE_KEY)||'swing';
     const keys = (json.mode_top && json.mode_top[mode]) || [];
-    const out = [];
-    keys.forEach(k => {
-      const chip = normalizeChip(k, json.pool && json.pool[k]);
-      if (chip) out.push(chip);
+    const out=[]; keys.forEach(k=>{
+      const c = normChip(k, json.pool && json.pool[k]);
+      if(c) out.push(c);
     });
     return out;
   }
 
-  // ---------- Client-only slippage (execution friction) ----------
-  function computeSlippageFromDOM() {
-    const txt = document.body.innerText || '';
-    const bid = parseFloat((txt.match(/Bid\s*([\d,]*\.?\d+)/i) || [])[1]?.replace(/,/g, ''));
-    const ask = parseFloat((txt.match(/Ask\s*([\d,]*\.?\d+)/i) || [])[1]?.replace(/,/g, ''));
-    if (bid && ask && ask > bid) {
-      const pct = ((ask - bid) / ((ask + bid) / 2)) * 100;
-      if (pct >= 0.30) return { key: 'slippage', color: 'amber', label: `Slippage ${pct.toFixed(2)}%` };
+  // --- Badges (restrictions) ---
+  function extractBadges(json){
+    const b = (json.pool && json.pool.badges) || {};
+    const pills=[];
+    if(b.t2t) pills.push('T2T');
+    if(b.asm && String(b.asm).toLowerCase()!=='none') pills.push(`ASM${b.asm===true?'':b.asm}`);
+    if(b.fo_ban) pills.push('F&O ban');
+    return pills;
+  }
+
+  // --- Slippage (execution friction) ---
+  function computeSlippageFromDOM(){
+    const txt=document.body.innerText||'';
+    const bid=parseFloat((txt.match(/Bid\s*([\d,]*\.?\d+)/i)||[])[1]?.replace(/,/g,'')); 
+    const ask=parseFloat((txt.match(/Ask\s*([\d,]*\.?\d+)/i)||[])[1]?.replace(/,/g,''));
+    if(bid && ask && ask>bid){
+      const pct=((ask-bid)/((ask+bid)/2))*100;
+      if(pct>=0.30) return {key:'slippage', color:'amber', label:`Slippage ${pct.toFixed(2)}%`};
     }
     return null;
   }
 
-  // ---------- Verdict sentence (friendly) ----------
-  function verdictSentence(chips) {
-    if (!chips.length) {
-      const mode = localStorage.getItem(MODE_KEY) || 'swing';
-      return mode === 'day'
-        ? 'All clear: No bans or surveillance. No near-term events in the next 3 sessions.'
-        : 'All clear: No bans or surveillance. No near-term events in the next 5 sessions.';
+  // --- Verdict sentence ---
+  function verdict(chips, badges){
+    if(!chips.length){
+      const mode=localStorage.getItem(MODE_KEY)||'swing';
+      const base = mode==='day'
+        ? 'All clear: No near-term events in the next 3 sessions.'
+        : 'All clear: No near-term events in the next 5 sessions.';
+      return badges.length ? `${base} • ${badges.join(' · ')}` : base;
     }
-    const parts = [];
-    const hasRed = chips.some(c => c.color === 'red');
-    const hasAmber = chips.some(c => c.color === 'amber');
-    const head = hasRed ? 'Caution' : hasAmber ? 'Heads-up' : 'All clear';
+    const hasRed=chips.some(c=>c.color==='red');
+    const hasAmber=chips.some(c=>c.color==='amber');
+    const head=hasRed?'Caution':hasAmber?'Heads-up':'All clear';
 
-    for (const c of chips.slice(0, 4)) {
-      const t = (c.label || '').toLowerCase();
-      if (/f&o ban|no f&o|ban today/.test(t)) parts.push('In F&O ban today');
-      else if (/asm|gsm|esm|t2t/.test(t))     parts.push(c.label.replace(/:/,' –'));
-      else if (/earnings|board|record/.test(t)) parts.push(c.label);
-      else if (/slippage/.test(t))            parts.push(`Expect ${c.label.toLowerCase()}`);
-      else if (/insider net/.test(t))         parts.push(c.label);
-      else if (/delivery/.test(t))            parts.push(c.label);
-      else parts.push(c.label);
+    const ph=[];
+    for(const c of chips.slice(0,4)){
+      const t=(c.label||'');
+      if(/earnings in/.test(t)) ph.push(t);
+      else if(/Earnings gap/.test(t)) ph.push(t);
+      else if(/Accumulation/.test(t)) ph.push(t);
+      else if(/Delivery/.test(t)) ph.push(t);
+      else if(/Insider net/.test(t)) ph.push(t);
+      else if(/pp/.test(t)) ph.push(`Pledge ${t}`);
+      else if(/deals/.test(t)) ph.push(`Bulk/Block ${t}`);
+      else if(/post-mortem|post-move|today/.test(t)) ph.push(`Post-move: ${t}`);
+      else if(/Slippage/.test(t)) ph.push(`Expect ${t.toLowerCase()}`);
+      else ph.push(t);
     }
-    return `${head}: ${parts.join(' • ')}`;
+    const line = `${head}: ${ph.join(' • ')}`;
+    return badges.length ? `${line} • ${badges.join(' · ')}` : line;
   }
 
-  // ---------- UI (glass card + docking) ----------
-  function colorHex(c) {
-    if (c === 'red') return '#e5484d';
-    if (c === 'amber') return '#f59e0b';
-    if (c === 'blue') return '#3b82f6';
-    if (c === 'green') return '#22c55e';
-    return '#9ca3af';
-  }
+  // --- UI (glass, badges, docking) ---
+  function colorHex(c){ if(c==='red')return'#e5484d'; if(c==='amber')return'#f59e0b'; if(c==='blue')return'#3b82f6'; if(c==='green')return'#22c55e'; return'#9ca3af'; }
 
-  function ensureCard() {
-    let card = document.getElementById('sidecar-hud');
-    if (card) return card;
-    const compact = localStorage.getItem(PREF_COMPACT) === '1';
-    card = document.createElement('div');
-    card.id = 'sidecar-hud';
-    card.style.cssText = `
-      position: fixed; z-index: 2147483647;
-      backdrop-filter: blur(10px) saturate(120%);
-      -webkit-backdrop-filter: blur(10px) saturate(120%);
-      background: rgba(20,22,28,0.55);
-      border: 1px solid rgba(255,255,255,0.18);
-      color: #fff;
-      padding: ${compact ? '8px 10px' : '12px 14px'};
-      border-radius: 16px;
-      box-shadow: 0 12px 32px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
-      font: ${compact ? '11px' : '12px'}/1.35 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
-      max-width: ${compact ? '430px' : '520px'};
+  function ensureCard(){
+    let card=document.getElementById('sidecar-hud'); if(card) return card;
+    const compact = localStorage.getItem(PREF_COMPACT)==='1';
+    card=document.createElement('div'); card.id='sidecar-hud';
+    card.style.cssText=`
+      position:fixed; z-index:2147483647;
+      backdrop-filter: blur(14px) saturate(130%); -webkit-backdrop-filter: blur(14px) saturate(130%);
+      background: rgba(20,22,28,.55); border:1px solid rgba(255,255,255,.18);
+      color:#fff; padding:${compact?'8px 10px':'12px 14px'}; border-radius:16px;
+      box-shadow:0 12px 32px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
+      font:${compact?'11px':'12px'}/1.35 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
+      max-width:${compact?'430px':'560px'};
     `;
-    card.innerHTML = `
-      <div id="sc-verdict" style="font-weight:700;margin-bottom:8px"></div>
+    card.innerHTML=`
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div id="sc-verdict" style="font-weight:800"></div>
+      </div>
+      <div id="sc-badges" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px"></div>
       <div id="sc-row" style="display:flex;gap:8px;flex-wrap:wrap"></div>
       <div style="opacity:.8;margin-top:8px;font-size:11px;display:flex;gap:12px;align-items:center">
         <span>Mode: <b id="sc-mode">${localStorage.getItem(MODE_KEY)||'swing'}</b></span>
@@ -209,112 +198,81 @@
         <span style="cursor:pointer;color:#a5d8ff" id="sc-compact">${compact?'expand':'compact'}</span>
       </div>`;
     document.body.appendChild(card);
-    card.querySelector('#sc-toggle').onclick = () => {
-      const cur = localStorage.getItem(MODE_KEY) || 'swing';
-      const next = cur === 'swing' ? 'day' : 'swing';
-      localStorage.setItem(MODE_KEY, next);
-      location.reload();
-    };
-    card.querySelector('#sc-compact').onclick = () => {
-      const cur = localStorage.getItem(PREF_COMPACT) === '1';
-      localStorage.setItem(PREF_COMPACT, cur ? '0' : '1');
-      location.reload();
-    };
+    card.querySelector('#sc-toggle').onclick=()=>{const cur=localStorage.getItem(MODE_KEY)||'swing';const next=cur==='swing'?'day':'swing';localStorage.setItem(MODE_KEY,next);location.reload();};
+    card.querySelector('#sc-compact').onclick=()=>{const cur=localStorage.getItem(PREF_COMPACT)==='1';localStorage.setItem(PREF_COMPACT,cur?'0':'1');location.reload();};
     return card;
   }
 
-  function renderChips(chips, verdictText) {
-    const card = ensureCard();
-    card.querySelector('#sc-verdict').textContent = verdictText || 'Sidecar';
-    const row = card.querySelector('#sc-row');
-    row.innerHTML = '';
-    chips.slice(0, 4).forEach(c => {
-      const chip = document.createElement('span');
-      chip.style.cssText = `
-        background: ${colorHex(c.color)}; color: #0b0f14;
-        padding: 5px 9px; border-radius: 999px; font-weight: 700;
-        box-shadow: 0 1px 0 rgba(255,255,255,.35) inset;
+  function render(chips, badges, vtext){
+    const card=ensureCard();
+    card.querySelector('#sc-verdict').textContent=vtext||'Sidecar';
+    const badgeWrap=card.querySelector('#sc-badges'); badgeWrap.innerHTML='';
+    badges.forEach(b=>{
+      const pill=document.createElement('span');
+      pill.style.cssText='background:#0e1524;border:1px solid rgba(255,255,255,.18);padding:2px 8px;border-radius:999px;font-weight:700;color:#bfe0ff';
+      pill.textContent=b; badgeWrap.appendChild(pill);
+    });
+    const row=card.querySelector('#sc-row'); row.innerHTML='';
+    chips.slice(0,4).forEach(c=>{
+      const chip=document.createElement('span');
+      chip.style.cssText=`
+        background:${colorHex(c.color)}; color:#0b0f14; padding:6px 10px;
+        border-radius:999px; font-weight:800; box-shadow:0 1px 0 rgba(255,255,255,.35) inset;
       `;
-      chip.textContent = c.label || '';
-      row.appendChild(chip);
+      chip.textContent=c.label||''; row.appendChild(chip);
     });
   }
 
-  function findAnchor() {
-    const btns = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
-    const cand = btns.find(b => {
-      const t = (b.innerText || '').trim().toLowerCase();
-      if (!t) return false;
-      const match = /^(buy|sell|trade)$/.test(t) || /\b(buy|sell|trade)\b/.test(t);
-      const r = b.getBoundingClientRect();
-      const visible = r.width > 40 && r.height > 20 && r.bottom > 0 && r.top < (window.innerHeight + 200);
-      return match && visible;
-    });
-    return cand || null;
+  function findAnchor(){
+    const btns=Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+    return btns.find(b=>{
+      const t=(b.innerText||'').trim().toLowerCase(); if(!t) return false;
+      const match=/\b(buy|sell|trade)\b/.test(t);
+      const r=b.getBoundingClientRect();
+      const visible=r.width>40&&r.height>20&&r.bottom>0&&r.top<(window.innerHeight+200);
+      return match&&visible;
+    })||null;
   }
-  function dockNear(el) {
-    const card = ensureCard();
-    const rect = el.getBoundingClientRect();
-    const x = Math.min(rect.right + 12, window.innerWidth - card.offsetWidth - 16);
-    const y = Math.max(16, rect.top + window.scrollY - 10);
-    card.style.left = `${x}px`;
-    card.style.top  = `${y}px`;
-    card.style.right = 'auto';
-    card.style.bottom = 'auto';
+  function dockNear(el){
+    const card=ensureCard(); const rect=el.getBoundingClientRect();
+    const x=Math.min(rect.right+12, window.innerWidth-card.offsetWidth-16);
+    const y=Math.max(16, rect.top+window.scrollY-10);
+    card.style.left=`${x}px`; card.style.top=`${y}px`; card.style.right='auto'; card.style.bottom='auto';
   }
-  function dockBottomRight() {
-    const card = ensureCard();
-    card.style.right = '16px';
-    card.style.bottom = '16px';
-    card.style.left = 'auto';
-    card.style.top = 'auto';
+  function dockBR(){
+    const card=ensureCard(); card.style.right='16px'; card.style.bottom='16px'; card.style.left='auto'; card.style.top='auto';
   }
 
-  // ---------- Render for current route ----------
-  async function renderForRoute() {
-    if (!isSymbolView()) {
-      const c = document.getElementById('sidecar-hud'); if (c) c.remove();
-      lastKey = '';
+  // --- Render loop for current route ---
+  async function renderForRoute(){
+    if(!isSymbolView()){
+      const c=document.getElementById('sidecar-hud'); if(c) c.remove(); lastKey=''; return;
+    }
+    await new Promise(r=>setTimeout(r,600));
+    const s=parseSymbolFromPath(); if(!s) return;
+
+    const key=`${s.ex}:${s.sym}`;
+    if(key===lastKey){
+      const a=findAnchor(); if(a) dockNear(a); else dockBR();
       return;
     }
-    await new Promise(r => setTimeout(r, 600)); // let SPA paint
+    lastKey=key;
 
-    const s = parseSymbolFromPath();
-    if (!s) return;
+    const j=await fetchJSON(s.ex, s.sym); if(!j){ dockBR(); return; }
 
-    const key = `${s.ex}:${s.sym}`;
-    if (key === lastKey) {
-      const a = findAnchor(); if (a) dockNear(a); else dockBottomRight();
-      return;
-    }
-    lastKey = key;
+    let chips=mapApplicableChips(j);
+    const slip=computeSlippageFromDOM(); if(slip) chips.splice(Math.min(2,chips.length),0,slip);
+    chips=chips.slice(0,4);
 
-    const j = await fetchJSON(s.ex, s.sym);
-    if (!j) { dockBottomRight(); return; }
+    const badges=extractBadges(j);
+    const vtext=verdict(chips, badges);
+    render(chips, badges, vtext);
 
-    // Map + filter to applicable chips only
-    let chips = mapApplicableChips(j);
-
-    // Client-only slippage
-    const slip = computeSlippageFromDOM();
-    if (slip) chips.splice(Math.min(2, chips.length), 0, slip);
-
-    // Keep at most 4 (priority already from server)
-    chips = chips.slice(0, 4);
-
-    renderChips(chips, verdictSentence(chips));
-    const a = findAnchor(); if (a) dockNear(a); else dockBottomRight();
+    const a=findAnchor(); if(a) dockNear(a); else dockBR();
   }
 
-  // Watch URL changes (SPA navigation)
-  let hrefLast = location.href;
-  setInterval(() => {
-    if (location.href !== hrefLast) {
-      hrefLast = location.href;
-      renderForRoute();
-    }
-  }, 700);
-
-  // Initial render
+  // Watch SPA route changes
+  let hrefLast=location.href;
+  setInterval(()=>{ if(location.href!==hrefLast){ hrefLast=location.href; renderForRoute(); } }, 700);
   renderForRoute();
 })();
